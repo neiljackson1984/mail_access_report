@@ -1,0 +1,1 @@
+Generate a report showing who has access to what, either via permissions or forwarding rules, within an Exchange Online tenant.
