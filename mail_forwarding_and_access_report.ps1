@@ -1,4 +1,7 @@
-$pathOfOutputReportFile = "mail_forwarding_and_access_report.txt"
+$reportTime = (Get-Date )
+$defaultDomainName = (Get-AzureAdDomain | where-object {$_.IsDefault}).Name
+
+$pathOfOutputReportFile = "mail_forwarding_and_access_report_$defaultDomainName_$('{0:yyyy-MM-dd_HH-mm}' -f $reportTime).txt"
 
 $allMailboxPermissions = get-mailbox | get-mailboxpermission 
 $allRecipientPermissions = get-mailbox | get-RecipientPermission 
@@ -7,7 +10,17 @@ $licensedAzureAdUsers = $allAzureAdUsers | where {$_.AssignedLicenses.Length -gt
 
 
 "" | Out-File -FilePath $pathOfOutputReportFile
+$reportTime = (Get-Date )
 
+
+(
+@"
+EMAIL FORWARDING AND ACCESS REPORT
+$defaultDomainName
+Prepared $('{0:yyyy/MM/dd HH:mm}' -f $reportTime)
+
+"@
+) | Out-File -Append -FilePath $pathOfOutputReportFile
 
 
 function convertRedirectEntryToAddress($redirectEntry){
@@ -63,6 +76,7 @@ function convertRedirectEntryToAddress($redirectEntry){
 
 
 foreach($mailbox in (get-mailbox | Sort-Object -Property PrimarySmtpAddress)){
+# foreach($mailbox in (get-mailbox | Sort-Object -Property PrimarySmtpAddress | Where-Object { -not $_.Identity.Contains("-snapshot20210502")  })){
     $azureAdUserWhoOwnsThisMailbox = $allAzureAdUsers | where {$_.UserPrincipalName -eq $mailbox.PrimarySmtpAddress}
     
     $fullAccessPermissionsToThisMailbox = (
@@ -95,10 +109,17 @@ foreach($mailbox in (get-mailbox | Sort-Object -Property PrimarySmtpAddress)){
         ([system.Array] @($azureAdUserWhoOwnsThisMailbox))
     ) | Sort-Object -Property UserPrincipalName
     
-    $addressesToWhichThisMailboxIsBeingRedirected = (Get-InboxRule -Mailbox $mailbox.Identity) | foreach-object{ $_.RedirectTo; $_.ForwardTo; $_.ForwardAsAttachmentTo;  } |  Where-Object {$_} | foreach-object { convertRedirectEntryToAddress $_ } | sort
+    $addressesToWhichThisMailboxIsBeingRedirected = @( 
+        (Get-InboxRule -Mailbox $mailbox.Identity) | foreach-object{ $_.RedirectTo; $_.ForwardTo; $_.ForwardAsAttachmentTo;  } |  Where-Object {$_} | foreach-object { convertRedirectEntryToAddress $_ }
+    ) 
     # we need the "|  Where-Object {$_}" in order to remove nulls from the pipeline, which happens when RedirectTo is, essentially, an empty list.
     
     #TODO: we should also look at the mailbox's ForwardingAddress and ForwardingSMTPAddress properties as possible sources of addresses to which this mailbox is being redirected.
+    
+    # look at mail flow rules that might be taking messages sent to this mailbox and forwarding them to someone else.
+    # Get-TransportRule | where-object { (get-mailbox -identity $_.SentTo) -eq $mailbox.Identity  }
+    
+    $addressesToWhichThisMailboxIsBeingRedirected = $addressesToWhichThisMailboxIsBeingRedirected | sort
     
     $reportMessage = ""
     $reportMessage += "The mailbox " + $mailbox.PrimarySmtpAddress + " (which is a " + $(if($mailbox.IsShared){"shared"} else {"non-shared"}) +  " mailbox) " 
