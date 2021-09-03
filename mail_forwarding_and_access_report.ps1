@@ -109,15 +109,38 @@ foreach($mailbox in (get-mailbox | Sort-Object -Property PrimarySmtpAddress)){
         ([system.Array] @($azureAdUserWhoOwnsThisMailbox))
     ) | Sort-Object -Property UserPrincipalName
     
-    $addressesToWhichThisMailboxIsBeingRedirected = @( 
-        (Get-InboxRule -Mailbox $mailbox.Identity) | foreach-object{ $_.RedirectTo; $_.ForwardTo; $_.ForwardAsAttachmentTo;  } |  Where-Object {$_} | foreach-object { convertRedirectEntryToAddress $_ }
-    ) 
-    # we need the "|  Where-Object {$_}" in order to remove nulls from the pipeline, which happens when RedirectTo is, essentially, an empty list.
+    $addressesToWhichThisMailboxIsBeingRedirected = (
+        @( 
+            ( Get-InboxRule -Mailbox $mailbox.Identity 
+            ) | foreach-object{ 
+                $_.RedirectTo; 
+                $_.ForwardTo; 
+                $_.ForwardAsAttachmentTo;  
+            } |  Where-Object {
+                $_
+                # we need the "|  Where-Object {$_}" in order to remove nulls from the pipeline, which happens when RedirectTo is, essentially, an empty list.
+            } | foreach-object { convertRedirectEntryToAddress $_ }
+        ) + @(
+            Get-TransportRule | where-object {
+                $_.State -eq "Enabled"
+            } | where-object {
+                $sentToList = $_.SentTo;
+                @(
+                    &{ $sentToList | foreach-object {(get-mailbox -identity $_).Identity} | where-object {$_} }
+                ).Contains($mailbox.Identity  )
+            } | foreach-object {
+                $_.CopyTo;
+                $_.BlindCopyTo;
+                $_.RedirectMessageTo;
+            }
+        )
+        # This is probably not a comprehensive way to detect all possible forwarding due to mail flow rules,
+        # but it serves the immediate purpose.
+    )
+    
     
     #TODO: we should also look at the mailbox's ForwardingAddress and ForwardingSMTPAddress properties as possible sources of addresses to which this mailbox is being redirected.
     
-    # look at mail flow rules that might be taking messages sent to this mailbox and forwarding them to someone else.
-    # Get-TransportRule | where-object { (get-mailbox -identity $_.SentTo) -eq $mailbox.Identity  }
     
     $addressesToWhichThisMailboxIsBeingRedirected = $addressesToWhichThisMailboxIsBeingRedirected | sort
     
